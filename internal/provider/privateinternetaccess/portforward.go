@@ -317,12 +317,15 @@ func packPayload(port uint16, token string, expiration time.Time) (payload strin
 	return payload, nil
 }
 
-const piaTokenURL = "https://www.privateinternetaccess.com/api/client/v2/token"
-
 func fetchToken(ctx context.Context, client *http.Client,
 	username, password string,
 ) (token string, err error) {
-	return fetchTokenFromURL(ctx, client, piaTokenURL, username, password)
+	tokenURL := url.URL{
+		Scheme: "https",
+		Host:   "www.privateinternetaccess.com",
+		Path:   "/api/client/v2/token",
+	}
+	return fetchTokenFromURL(ctx, client, tokenURL.String(), username, password)
 }
 
 func fetchTokenFromURL(ctx context.Context, client *http.Client,

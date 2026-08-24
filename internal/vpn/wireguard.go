@@ -89,8 +89,8 @@ func buildRegisteredWireguardSettings(registration models.WireguardConnection,
 	userSettings.PrivateKey = &privateKey
 	userSettings.Addresses = append([]netip.Prefix(nil), registration.Addresses...)
 	if *userSettings.PersistentKeepaliveInterval == 0 {
-		piaPersistentKeepalive := 25 * time.Second
-		userSettings.PersistentKeepaliveInterval = &piaPersistentKeepalive
+		const piaPersistentKeepalive = 25 * time.Second
+		userSettings.PersistentKeepaliveInterval = new(piaPersistentKeepalive)
 	}
 	const piaIPv6Supported = false
 	return buildWireguardSettings(registration.Connection, userSettings, piaIPv6Supported)

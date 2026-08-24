@@ -62,27 +62,12 @@ var regexpInterfaceName = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 func (w Wireguard) validate(vpnProvider string, ipv6Supported, amneziawg bool) (err error) {
 	dynamicPIAWireguard := vpnProvider == providers.PrivateInternetAccess && !amneziawg
 	if dynamicPIAWireguard {
-		switch {
-		case *w.PrivateKey != "":
-			return errors.New("private key must not be set for Private Internet Access")
-		case *w.PreSharedKey != "":
-			return errors.New("pre-shared key must not be set for Private Internet Access")
+		if err := w.validatePIAKeys(); err != nil {
+			return err
 		}
 	}
 
-	// Validate PrivateKey
-	if *w.PrivateKey == "" && !dynamicPIAWireguard {
-		return errors.New("private key is not set")
-	}
-	if *w.PrivateKey != "" {
-		_, err = wgtypes.ParseKey(*w.PrivateKey)
-	}
-	if err != nil {
-		err = fmt.Errorf("private key is not valid: %w", err)
-		if vpnProvider == providers.Nordvpn &&
-			err.Error() == "wgtypes: incorrect key size: 48" {
-			err = fmt.Errorf("%w - you might be using your access token instead of the Wireguard private key", err)
-		}
+	if err := w.validatePrivateKey(vpnProvider, dynamicPIAWireguard); err != nil {
 		return err
 	}
 
@@ -143,6 +128,37 @@ func (w Wireguard) validate(vpnProvider string, ipv6Supported, amneziawg bool) (
 	}
 
 	return nil
+}
+
+func (w Wireguard) validatePIAKeys() error {
+	switch {
+	case *w.PrivateKey != "":
+		return errors.New("private key must not be set for Private Internet Access")
+	case *w.PreSharedKey != "":
+		return errors.New("pre-shared key must not be set for Private Internet Access")
+	default:
+		return nil
+	}
+}
+
+func (w Wireguard) validatePrivateKey(vpnProvider string, optional bool) error {
+	if *w.PrivateKey == "" {
+		if optional {
+			return nil
+		}
+		return errors.New("private key is not set")
+	}
+
+	_, err := wgtypes.ParseKey(*w.PrivateKey)
+	if err == nil {
+		return nil
+	}
+	err = fmt.Errorf("private key is not valid: %w", err)
+	if vpnProvider == providers.Nordvpn &&
+		err.Error() == "wgtypes: incorrect key size: 48" {
+		err = fmt.Errorf("%w - you might be using your access token instead of the Wireguard private key", err)
+	}
+	return err
 }
 
 func (w *Wireguard) copy() (copied Wireguard) {

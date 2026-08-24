@@ -3,6 +3,7 @@ package restrictednet
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"net"
 	"net/http"
 	"net/netip"
@@ -17,7 +18,7 @@ func Test_newHTTPSClient_usesRootCAs(t *testing.T) {
 
 	rootCAs := x509.NewCertPool()
 	dial := func(context.Context, string, string) (net.Conn, error) {
-		return nil, nil
+		return nil, errors.New("unexpected dial")
 	}
 	client := newHTTPSClient("pia-server", dial, rootCAs)
 

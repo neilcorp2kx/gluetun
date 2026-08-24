@@ -5,9 +5,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -29,11 +31,20 @@ func Test_fetchToken(t *testing.T) {
 	}
 	received := make(chan receivedRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
-		_ = request.ParseForm()
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			responseWriter.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		form, err := url.ParseQuery(string(body))
+		if err != nil {
+			responseWriter.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		received <- receivedRequest{
 			method:   request.Method,
-			username: request.Form.Get("username"),
-			password: request.Form.Get("password"),
+			username: form.Get("username"),
+			password: form.Get("password"),
 		}
 		responseWriter.Header().Set("Content-Type", "application/json")
 		_, _ = responseWriter.Write([]byte(`{"token":"test-token"}`))
@@ -215,6 +226,7 @@ func Test_readPIAPortForwardData_restrictsPermissionsOnReuse(t *testing.T) {
 	contents, err := json.Marshal(expectedData)
 	require.NoError(t, err)
 	path := t.TempDir() + "/pia.json"
+	//nolint:gosec // Test begins with intentionally broad permissions.
 	require.NoError(t, os.WriteFile(path, contents, 0o644))
 	require.NoError(t, os.Chmod(path, 0o644))
 
@@ -231,6 +243,7 @@ func Test_writePIAPortForwardData_restrictsPermissions(t *testing.T) {
 	t.Parallel()
 
 	path := t.TempDir() + "/pia.json"
+	//nolint:gosec // Test begins with intentionally broad permissions.
 	require.NoError(t, os.WriteFile(path, []byte("old data"), 0o644))
 	require.NoError(t, os.Chmod(path, 0o644))
 

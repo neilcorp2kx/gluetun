@@ -102,7 +102,7 @@ func (p *Provider) fetchWireguardToken(ctx context.Context, username, password s
 	}
 	defer cleanupRestrictedConnection(cleanup, &err)
 
-	token, err = fetchTokenFromURL(ctx, client, piaTokenURL, username, password)
+	token, err = fetchToken(ctx, client, username, password)
 	if err != nil {
 		return "", fmt.Errorf("fetching from token server: %w", err)
 	}

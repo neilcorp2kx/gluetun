@@ -43,7 +43,7 @@ func (piaPortForwarderStub) Name() string {
 }
 
 func (piaPortForwarderStub) PortForward(context.Context, utils.PortForwardObjects) (map[uint16]uint16, error) {
-	return nil, nil
+	return map[uint16]uint16{}, nil
 }
 
 func (piaPortForwarderStub) KeepPortForward(context.Context, utils.PortForwardObjects) error {
