@@ -32,17 +32,18 @@ func Test_Provider_GetWireguardConnection(t *testing.T) {
 				Body: io.NopCloser(strings.NewReader(
 					`{"regions":[{"id":"ca_vancouver","name":"CA Vancouver",` +
 						`"dns":"ca-vancouver.privacy.network","port_forward":true,` +
-						`"servers":{"wg":[{"ip":"198.51.100.2","cn":"vancouver439"}]}}]}` +
+						`"servers":{"wg":[{"ip":"198.51.100.2","cn":"vancouver439"},` +
+						`{"ip":"198.51.100.4","cn":"vancouver440"}]}}]}` +
 						"\nsignature")),
 			}, nil
 		}),
 	}
-	cleanupCalled := false
+	cleanupCalls := 0
 	restrictedClient := &testRestrictedClient{
 		openHTTPSByHostname: func(_ context.Context, hostname string) (*http.Client, func() error, error) {
 			assert.Equal(t, "serverlist.piaservers.net:443", hostname)
 			return client, func() error {
-				cleanupCalled = true
+				cleanupCalls++
 				return nil
 			}, nil
 		},
@@ -64,7 +65,12 @@ func Test_Provider_GetWireguardConnection(t *testing.T) {
 		ServerName:  "vancouver439",
 		PortForward: true,
 	}, connection)
-	assert.True(t, cleanupCalled)
+
+	connection, err = provider.GetWireguardConnection(t.Context(), selection, restrictedClient)
+	require.NoError(t, err)
+	assert.Equal(t, netip.MustParseAddr("198.51.100.4"), connection.IP)
+	assert.Equal(t, "vancouver440", connection.ServerName)
+	assert.Equal(t, 2, cleanupCalls)
 }
 
 func Test_Provider_GetConnection_wireguard(t *testing.T) {

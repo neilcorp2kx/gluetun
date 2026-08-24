@@ -34,20 +34,26 @@ func (p *Provider) GetWireguardConnection(ctx context.Context, selection setting
 	defer cleanupRestrictedConnection(cleanup, &err)
 
 	liveUpdater := updater.New(client)
-	server, err := liveUpdater.FetchWireguardServer(ctx, selection)
+	servers, err := liveUpdater.FetchWireguardServers(ctx, selection)
 	if err != nil {
-		return connection, fmt.Errorf("fetching Wireguard server: %w", err)
+		return connection, fmt.Errorf("fetching Wireguard servers: %w", err)
 	}
 
-	return models.Connection{
-		Type:        vpn.Wireguard,
-		IP:          server.IPs[0],
-		Port:        wireguardRegistrationPort,
-		Protocol:    constants.UDP,
-		Hostname:    server.Hostname,
-		ServerName:  server.ServerName,
-		PortForward: server.PortForward,
-	}, nil
+	connections := make([]models.Connection, 0, len(servers))
+	for _, server := range servers {
+		for _, ip := range server.IPs {
+			connections = append(connections, models.Connection{
+				Type:        vpn.Wireguard,
+				IP:          ip,
+				Port:        wireguardRegistrationPort,
+				Protocol:    constants.UDP,
+				Hostname:    server.Hostname,
+				ServerName:  server.ServerName,
+				PortForward: server.PortForward,
+			})
+		}
+	}
+	return p.connPicker.PickConnection(connections, selection)
 }
 
 func cleanupRestrictedConnection(cleanup func() error, err *error) {
