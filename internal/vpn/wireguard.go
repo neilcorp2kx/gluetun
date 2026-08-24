@@ -3,7 +3,6 @@ package vpn
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/netip"
 	"strings"
 	"time"
@@ -21,25 +20,16 @@ import (
 // It returns the selected connection, an optional provider-generated gateway
 // for port forwarding, and an error if setup fails.
 func setupWireguard(ctx context.Context, netlinker NetLinker,
-	fw Firewall, providerConf provider.Provider,
+	fw Firewall, providerConf provider.Provider, restrictedClient provider.RestrictedClient,
 	settings settings.VPN, ipv6SupportLevel netlink.IPv6SupportLevel, logger wireguard.Logger) (
 	wireguarder *wireguard.Wireguard, connection models.Connection,
 	gateway netip.Addr, err error,
 ) {
 	ipv6Internet := ipv6SupportLevel == netlink.IPv6Internet
 	dynamicProvider, dynamic := providerConf.(provider.DynamicWireguardProvider)
-	var lookupNetIP func(context.Context, string, string) ([]netip.Addr, error)
-	var bootstrapDialContext func(context.Context, string, string) (net.Conn, error)
 	if dynamic {
-		bootstrapSettings := wireguard.Settings{}
-		bootstrapSettings.SetDefaults()
-		bootstrapResolver := newBootstrapResolver(bootstrapSettings.FirewallMark,
-			fw.TempAllowConnection)
-		lookupNetIP = bootstrapResolver.LookupNetIP
-		bootstrapDialContext = bootstrapResolver.dialContext
 		connection, err = dynamicProvider.GetWireguardConnection(ctx,
-			settings.Provider.ServerSelection, lookupNetIP, bootstrapDialContext,
-			fw.TempAllowConnection)
+			settings.Provider.ServerSelection, restrictedClient)
 	} else {
 		connection, err = providerConf.GetConnection(settings.Provider.ServerSelection, ipv6Internet)
 	}
@@ -50,8 +40,7 @@ func setupWireguard(ctx context.Context, netlinker NetLinker,
 	var wireguardSettings wireguard.Settings
 	if dynamic {
 		wireguardConnection, err := dynamicProvider.RegisterWireguard(ctx, connection,
-			*settings.OpenVPN.User, *settings.OpenVPN.Password,
-			lookupNetIP, bootstrapDialContext, fw.TempAllowConnection)
+			*settings.OpenVPN.User, *settings.OpenVPN.Password, restrictedClient)
 		if err != nil {
 			return nil, models.Connection{}, netip.Addr{}, fmt.Errorf("registering Wireguard connection: %w", err)
 		}

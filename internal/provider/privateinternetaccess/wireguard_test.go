@@ -56,32 +56,29 @@ func Test_Provider_RegisterWireguard(t *testing.T) {
 			}, nil
 		}),
 	}
-	provider := New(nil, time.Now, nil)
-	tokenServerIP := netip.MustParseAddr("192.0.2.20")
 	selectedServerIP := netip.MustParseAddr("198.51.100.2")
-	dialedIPs := make([]netip.Addr, 0, 2)
-	provider.newDialingClient = func(_ string, serverIP netip.Addr,
-		_ func(context.Context, string, string) (net.Conn, error),
-	) (*http.Client, error) {
-		dialedIPs = append(dialedIPs, serverIP)
-		return client, nil
+	cleanups := 0
+	restrictedClient := &testRestrictedClient{
+		openHTTPSByHostname: func(_ context.Context, hostname string) (*http.Client, func() error, error) {
+			assert.Equal(t, "www.privateinternetaccess.com:443", hostname)
+			return client, func() error {
+				cleanups++
+				return nil
+			}, nil
+		},
+		openHTTPSWithRootCAs: func(_ context.Context, serverName string,
+			addrPort netip.AddrPort, rootCAs *x509.CertPool,
+		) (*http.Client, func() error, error) {
+			assert.Equal(t, testPIAServerName, serverName)
+			assert.Equal(t, netip.AddrPortFrom(selectedServerIP, wireguardRegistrationPort), addrPort)
+			assert.NotNil(t, rootCAs)
+			return client, func() error {
+				cleanups++
+				return nil
+			}, nil
+		},
 	}
-	lookupNetIP := func(_ context.Context, network, host string) ([]netip.Addr, error) {
-		assert.Equal(t, "ip4", network)
-		assert.Equal(t, "www.privateinternetaccess.com", host)
-		return []netip.Addr{tokenServerIP}, nil
-	}
-	allowedConnections := make([]models.Connection, 0, 2)
-	removedAllowances := 0
-	allowConnection := func(_ context.Context, connection models.Connection) (
-		func(context.Context) error, error,
-	) {
-		allowedConnections = append(allowedConnections, connection)
-		return func(context.Context) error {
-			removedAllowances++
-			return nil
-		}, nil
-	}
+	provider := New(nil, time.Now, nil)
 	selectedConnection := models.Connection{
 		Type:        vpn.Wireguard,
 		IP:          selectedServerIP,
@@ -92,18 +89,11 @@ func Test_Provider_RegisterWireguard(t *testing.T) {
 		PortForward: true,
 	}
 
-	registration, err := provider.RegisterWireguard(context.Background(), selectedConnection,
-		"username", "password", lookupNetIP, new(net.Dialer).DialContext, allowConnection)
+	registration, err := provider.RegisterWireguard(t.Context(), selectedConnection,
+		"username", "password", restrictedClient)
 	require.NoError(t, err)
 
-	expectedRegistrationConnection := selectedConnection
-	expectedRegistrationConnection.Protocol = constants.TCP
-	assert.Equal(t, []models.Connection{
-		{IP: tokenServerIP, Port: 443, Protocol: constants.TCP},
-		expectedRegistrationConnection,
-	}, allowedConnections)
-	assert.Equal(t, []netip.Addr{tokenServerIP, selectedServerIP}, dialedIPs)
-	assert.Equal(t, len(allowedConnections), removedAllowances)
+	assert.Equal(t, 2, cleanups)
 	assert.Equal(t, netip.MustParseAddr("198.51.100.3"), registration.Connection.IP)
 	assert.Equal(t, uint16(51820), registration.Connection.Port)
 	assert.Equal(t, constants.UDP, registration.Connection.Protocol)
@@ -156,11 +146,17 @@ func Test_fetchAddKey(t *testing.T) {
 
 	listenerAddress, err := netip.ParseAddrPort(server.Listener.Addr().String())
 	require.NoError(t, err)
-	client, err := newHTTPClientDialing(serverName, listenerAddress.Addr(), new(net.Dialer).DialContext)
-	require.NoError(t, err)
+	client := server.Client()
 	transport, ok := client.Transport.(*http.Transport)
 	require.True(t, ok)
-	transport.TLSClientConfig.RootCAs = rootCAs
+	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return new(net.Dialer).DialContext(ctx, network, server.Listener.Addr().String())
+	}
+	tlsConfig := transport.TLSClientConfig.Clone()
+	tlsConfig.InsecureSkipVerify = false
+	tlsConfig.RootCAs = rootCAs
+	tlsConfig.ServerName = serverName
+	transport.TLSClientConfig = tlsConfig
 
 	data, err := fetchAddKey(context.Background(), client, serverName,
 		listenerAddress.Port(), token, clientPublicKey)
@@ -240,7 +236,7 @@ func Test_mapAddKeyResponse_rejectsUnsupportedIPAddresses(t *testing.T) {
 		PeerIP:     netip.MustParseAddr("10.13.161.2"),
 	}
 	testCases := map[string]struct {
-		update      func(response *addKeyResponse)
+		update     func(response *addKeyResponse)
 		errMessage string
 	}{
 		"server_ip_unspecified": {

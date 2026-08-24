@@ -178,30 +178,6 @@ func (c *Config) AcceptOutput(ctx context.Context,
 	return c.runIP6tablesInstruction(ctx, instruction)
 }
 
-func (c *Config) AcceptOutputMarked(ctx context.Context,
-	protocol, intf string, ip netip.Addr, port uint16, mark uint32, remove bool,
-) error {
-	instruction := acceptOutputMarkedInstruction(protocol, intf, ip, port, mark, remove)
-	if ip.Is4() {
-		return c.runIptablesInstruction(ctx, instruction)
-	} else if c.ip6Tables == "" {
-		return fmt.Errorf("accept marked output to VPN server %s: %s", ip, needIP6Tables)
-	}
-	return c.runIP6tablesInstruction(ctx, instruction)
-}
-
-func acceptOutputMarkedInstruction(protocol, intf string, ip netip.Addr,
-	port uint16, mark uint32, remove bool,
-) string {
-	interfaceFlag := "-o " + intf
-	if intf == "*" { // all interfaces
-		interfaceFlag = ""
-	}
-
-	return fmt.Sprintf("%s OUTPUT -d %s %s -p %s -m %s --dport %d -m mark --mark %d -j ACCEPT",
-		appendOrDelete(remove), ip, interfaceFlag, protocol, protocol, port, mark)
-}
-
 func (c *Config) AcceptOutputFromIPPortToIPPort(ctx context.Context,
 	protocol, intf string, source, destination netip.AddrPort, remove bool,
 ) error {
@@ -224,7 +200,6 @@ func (c *Config) AcceptOutputFromIPPortToIPPort(ctx context.Context,
 	}
 	return c.runIP6tablesInstruction(ctx, instruction)
 }
-
 
 // AcceptOutputFromIPToSubnet accepts outgoing traffic from sourceIP to destinationSubnet
 // on the interface intf. If intf is empty, it is set to "*" which means all interfaces.

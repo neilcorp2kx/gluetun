@@ -2,15 +2,14 @@ package privateinternetaccess
 
 import (
 	"context"
+	"crypto/x509"
 	"io"
-	"net"
 	"net/http"
 	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/golang/mock/gomock"
 	"github.com/qdm12/gluetun/internal/configuration/settings"
 	"github.com/qdm12/gluetun/internal/constants"
 	"github.com/qdm12/gluetun/internal/constants/providers"
@@ -19,6 +18,7 @@ import (
 	"github.com/qdm12/gluetun/internal/provider/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func Test_Provider_GetWireguardConnection(t *testing.T) {
@@ -37,45 +37,24 @@ func Test_Provider_GetWireguardConnection(t *testing.T) {
 			}, nil
 		}),
 	}
+	cleanupCalled := false
+	restrictedClient := &testRestrictedClient{
+		openHTTPSByHostname: func(_ context.Context, hostname string) (*http.Client, func() error, error) {
+			assert.Equal(t, "serverlist.piaservers.net:443", hostname)
+			return client, func() error {
+				cleanupCalled = true
+				return nil
+			}, nil
+		},
+	}
 	provider := New(nil, time.Now, client)
-	const serverListIPString = "192.0.2.10"
-	serverListIP := netip.MustParseAddr(serverListIPString)
-	lookupNetIP := func(_ context.Context, network, host string) ([]netip.Addr, error) {
-		assert.Equal(t, "ip4", network)
-		assert.Equal(t, "serverlist.piaservers.net", host)
-		return []netip.Addr{serverListIP}, nil
-	}
-	provider.newDialingClient = func(serverName string, serverIP netip.Addr,
-		_ func(context.Context, string, string) (net.Conn, error),
-	) (*http.Client, error) {
-		assert.Equal(t, "serverlist.piaservers.net", serverName)
-		assert.Equal(t, serverListIP, serverIP)
-		return client, nil
-	}
 	selection := settings.ServerSelection{
 		VPN:     vpn.Wireguard,
 		Regions: []string{"ca_vancouver"},
 	}.WithDefaults(providers.PrivateInternetAccess)
 
-	var allowedConnection models.Connection
-	connectionAllowanceRemoved := false
-	allowConnection := func(_ context.Context, connection models.Connection) (
-		func(context.Context) error, error,
-	) {
-		allowedConnection = connection
-		return func(context.Context) error {
-			connectionAllowanceRemoved = true
-			return nil
-		}, nil
-	}
-	connection, err := provider.GetWireguardConnection(context.Background(), selection,
-		lookupNetIP, new(net.Dialer).DialContext, allowConnection)
+	connection, err := provider.GetWireguardConnection(t.Context(), selection, restrictedClient)
 	require.NoError(t, err)
-	assert.Equal(t, models.Connection{
-		IP:       serverListIP,
-		Port:     443,
-		Protocol: constants.TCP,
-	}, allowedConnection)
 	assert.Equal(t, models.Connection{
 		Type:        vpn.Wireguard,
 		IP:          netip.MustParseAddr("198.51.100.2"),
@@ -85,7 +64,7 @@ func Test_Provider_GetWireguardConnection(t *testing.T) {
 		ServerName:  "vancouver439",
 		PortForward: true,
 	}, connection)
-	assert.True(t, connectionAllowanceRemoved)
+	assert.True(t, cleanupCalled)
 }
 
 func Test_Provider_GetConnection_wireguard(t *testing.T) {
@@ -100,7 +79,7 @@ func Test_Provider_GetConnection_wireguard(t *testing.T) {
 		Hostname:         "ca-vancouver.privacy.network",
 		PortForward:      true,
 		WireguardDynamic: true,
-		IPs:               []netip.Addr{netip.MustParseAddr("198.51.100.2")},
+		IPs:              []netip.Addr{netip.MustParseAddr("198.51.100.2")},
 	}
 	controller := gomock.NewController(t)
 	storage := common.NewMockStorage(controller)
@@ -122,4 +101,22 @@ type piaRoundTripFunc func(request *http.Request) (*http.Response, error)
 
 func (f piaRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return f(request)
+}
+
+type testRestrictedClient struct {
+	openHTTPSByHostname  func(context.Context, string) (*http.Client, func() error, error)
+	openHTTPSWithRootCAs func(context.Context, string, netip.AddrPort,
+		*x509.CertPool) (*http.Client, func() error, error)
+}
+
+func (c *testRestrictedClient) OpenHTTPSByHostname(ctx context.Context, hostname string) (
+	*http.Client, func() error, error,
+) {
+	return c.openHTTPSByHostname(ctx, hostname)
+}
+
+func (c *testRestrictedClient) OpenHTTPSWithRootCAs(ctx context.Context, destinationTLSName string,
+	destinationAddrPort netip.AddrPort, rootCAs *x509.CertPool,
+) (*http.Client, func() error, error) {
+	return c.openHTTPSWithRootCAs(ctx, destinationTLSName, destinationAddrPort, rootCAs)
 }

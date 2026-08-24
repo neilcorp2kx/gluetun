@@ -15,18 +15,19 @@ import (
 	"github.com/qdm12/gluetun/internal/constants"
 	"github.com/qdm12/gluetun/internal/constants/vpn"
 	"github.com/qdm12/gluetun/internal/models"
+	"github.com/qdm12/gluetun/internal/provider/common"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 type addKeyResponse struct {
-	Status      string       `json:"status"`
-	ServerKey   string       `json:"server_key"`
-	ServerPort  uint16       `json:"server_port"`
-	ServerIP    netip.Addr   `json:"server_ip"`
-	ServerVIP   netip.Addr   `json:"server_vip"`
-	PeerIP      netip.Addr   `json:"peer_ip"`
-	PeerPubKey  string       `json:"peer_pubkey"`
-	DNSServers  []netip.Addr `json:"dns_servers"`
+	Status     string       `json:"status"`
+	ServerKey  string       `json:"server_key"`
+	ServerPort uint16       `json:"server_port"`
+	ServerIP   netip.Addr   `json:"server_ip"`
+	ServerVIP  netip.Addr   `json:"server_vip"`
+	PeerIP     netip.Addr   `json:"peer_ip"`
+	PeerPubKey string       `json:"peer_pubkey"`
+	DNSServers []netip.Addr `json:"dns_servers"`
 }
 
 const wireguardRegistrationPort uint16 = 1337
@@ -34,14 +35,11 @@ const wireguardRegistrationPort uint16 = 1337
 // RegisterWireguard registers a fresh ephemeral key with the selected PIA
 // server and returns all provider-generated connection settings.
 func (p *Provider) RegisterWireguard(ctx context.Context, connection models.Connection,
-	username, password string,
-	lookupNetIP func(context.Context, string, string) ([]netip.Addr, error),
-	dialContext func(context.Context, string, string) (net.Conn, error),
-	allowConnection func(context.Context, models.Connection) (func(context.Context) error, error),
+	username, password string, restrictedClient common.RestrictedClient,
 ) (wireguardConnection models.WireguardConnection, err error) {
 	switch {
-	case !connection.IP.IsValid():
-		return wireguardConnection, errors.New("registration server IP is not set")
+	case restrictedClient == nil:
+		return wireguardConnection, errors.New("restricted network client is not set")
 	case connection.ServerName == "":
 		return wireguardConnection, errors.New("registration server name is not set")
 	case username == "":
@@ -49,9 +47,11 @@ func (p *Provider) RegisterWireguard(ctx context.Context, connection models.Conn
 	case password == "":
 		return wireguardConnection, errors.New("password is not set")
 	}
+	if err := validateRegistrationIPv4(connection.IP, "registration server IP"); err != nil {
+		return wireguardConnection, err
+	}
 
-	token, err := p.fetchWireguardToken(ctx, username, password,
-		lookupNetIP, dialContext, allowConnection)
+	token, err := p.fetchWireguardToken(ctx, username, password, restrictedClient)
 	if err != nil {
 		return wireguardConnection, fmt.Errorf("fetching token: %w", err)
 	}
@@ -62,20 +62,17 @@ func (p *Provider) RegisterWireguard(ctx context.Context, connection models.Conn
 	}
 	publicKey := privateKey.PublicKey().String()
 
-	client, err := p.newDialingClient(connection.ServerName, connection.IP, dialContext)
+	rootCAs, err := newPIACertificatePool(connection.ServerName)
 	if err != nil {
-		return wireguardConnection, fmt.Errorf("creating registration HTTP client: %w", err)
+		return wireguardConnection, fmt.Errorf("creating PIA certificate pool: %w", err)
 	}
-
-	registrationConnection := connection
-	registrationConnection.Port = wireguardRegistrationPort
-	registrationConnection.Protocol = constants.TCP
-	removeConnection, err := allowConnection(ctx, registrationConnection)
+	registrationAddrPort := netip.AddrPortFrom(connection.IP, wireguardRegistrationPort)
+	client, cleanup, err := restrictedClient.OpenHTTPSWithRootCAs(ctx,
+		connection.ServerName, registrationAddrPort, rootCAs)
 	if err != nil {
-		return wireguardConnection, fmt.Errorf("allowing registration connection: %w", err)
+		return wireguardConnection, fmt.Errorf("opening registration connection: %w", err)
 	}
-	defer cleanupTemporaryConnection(ctx, removeConnection, &err)
-	defer client.CloseIdleConnections()
+	defer cleanupRestrictedConnection(cleanup, &err)
 
 	response, err := fetchAddKey(ctx, client, connection.ServerName,
 		wireguardRegistrationPort, token, publicKey)
@@ -91,51 +88,25 @@ func (p *Provider) RegisterWireguard(ctx context.Context, connection models.Conn
 }
 
 func (p *Provider) fetchWireguardToken(ctx context.Context, username, password string,
-	lookupNetIP func(context.Context, string, string) ([]netip.Addr, error),
-	dialContext func(context.Context, string, string) (net.Conn, error),
-	allowConnection func(context.Context, models.Connection) (func(context.Context) error, error),
+	restrictedClient common.RestrictedClient,
 ) (token string, err error) {
+	if restrictedClient == nil {
+		return "", errors.New("restricted network client is not set")
+	}
+
 	const tokenServerName = "www.privateinternetaccess.com"
-	const timeout = 10 * time.Second
-	lookupCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	addresses, err := lookupNetIP(lookupCtx, "ip4", tokenServerName)
+	client, cleanup, err := restrictedClient.OpenHTTPSByHostname(ctx,
+		net.JoinHostPort(tokenServerName, "443"))
 	if err != nil {
-		return "", fmt.Errorf("resolving token server: %w", err)
-	} else if len(addresses) == 0 {
-		return "", errors.New("resolving token server: no IPv4 address found")
+		return "", fmt.Errorf("opening token server connection: %w", err)
 	}
+	defer cleanupRestrictedConnection(cleanup, &err)
 
-	const tokenServerPort = 443
-	errs := make([]error, 0, len(addresses))
-	for _, address := range addresses {
-		tokenConnection := models.Connection{
-			IP:       address,
-			Port:     tokenServerPort,
-			Protocol: constants.TCP,
-		}
-		removeConnection, err := allowConnection(ctx, tokenConnection)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("allowing token connection: %w", err))
-			continue
-		}
-
-		client, err := p.newDialingClient(tokenServerName, tokenConnection.IP, dialContext)
-		if err != nil {
-			cleanupTemporaryConnection(ctx, removeConnection, &err)
-			errs = append(errs, fmt.Errorf("creating token HTTP client: %w", err))
-			continue
-		}
-		token, err = fetchTokenFromURL(ctx, client, piaTokenURL, username, password)
-		client.CloseIdleConnections()
-		cleanupTemporaryConnection(ctx, removeConnection, &err)
-		if err == nil {
-			return token, nil
-		}
-		errs = append(errs, err)
+	token, err = fetchTokenFromURL(ctx, client, piaTokenURL, username, password)
+	if err != nil {
+		return "", fmt.Errorf("fetching from token server: %w", err)
 	}
-
-	return "", fmt.Errorf("fetching from token server: %w", errors.Join(errs...))
+	return token, nil
 }
 
 func fetchAddKey(ctx context.Context, client *http.Client, serverName string,
