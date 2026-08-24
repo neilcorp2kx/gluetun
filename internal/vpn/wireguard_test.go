@@ -31,22 +31,26 @@ func Test_buildRegisteredWireguardSettings(t *testing.T) {
 	}
 	zeroKeepalive := time.Duration(0)
 	userSettings := settings.Wireguard{
-		PrivateKey:                  new("unused-user-private-key"),
-		PreSharedKey:                new(""),
-		AllowedIPs:                  []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")},
+		PrivateKey:   new("unused-user-private-key"),
+		PreSharedKey: new(""),
+		AllowedIPs: []netip.Prefix{
+			netip.MustParsePrefix("0.0.0.0/0"),
+			netip.MustParsePrefix("::/0"),
+		},
 		PersistentKeepaliveInterval: &zeroKeepalive,
 		Interface:                   "tun0",
 		MTU:                         new(uint32(1320)),
 		GSO:                         new(true),
 	}
 
-	wireguardSettings := buildRegisteredWireguardSettings(registration, userSettings, false)
+	wireguardSettings := buildRegisteredWireguardSettings(registration, userSettings)
 
 	assert.Equal(t, registeredPrivateKey.String(), wireguardSettings.PrivateKey)
 	assert.Equal(t, registration.Connection.PubKey, wireguardSettings.PublicKey)
 	assert.Equal(t, netip.MustParseAddrPort("198.51.100.3:1337"), wireguardSettings.Endpoint)
 	assert.Equal(t, registration.Addresses, wireguardSettings.Addresses)
 	assert.Equal(t, []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}, wireguardSettings.AllowedIPs)
+	assert.False(t, *wireguardSettings.IPv6)
 	assert.Equal(t, 25*time.Second, wireguardSettings.PersistentKeepaliveInterval)
 	assert.Equal(t, new(true), wireguardSettings.GSO)
 }

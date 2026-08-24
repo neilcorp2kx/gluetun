@@ -33,6 +33,7 @@ func Test_VPN_validatePIAWireguard(t *testing.T) {
 		regions         []string
 		names           []string
 		wireguardKey    string
+		preSharedKey    string
 		expectedErrPart string
 	}{
 		"valid": {
@@ -72,6 +73,13 @@ func Test_VPN_validatePIAWireguard(t *testing.T) {
 			wireguardKey:    "not-used",
 			expectedErrPart: "private key must not be set",
 		},
+		"static_pre_shared_key_set": {
+			username:        username,
+			password:        password,
+			regions:         []string{region},
+			preSharedKey:    "not-used",
+			expectedErrPart: "pre-shared key must not be set",
+		},
 	}
 
 	filterChoicesGetter := testFilterChoicesGetter{
@@ -95,6 +103,7 @@ func Test_VPN_validatePIAWireguard(t *testing.T) {
 			*vpnSettings.OpenVPN.User = testCase.username
 			*vpnSettings.OpenVPN.Password = testCase.password
 			*vpnSettings.Wireguard.PrivateKey = testCase.wireguardKey
+			*vpnSettings.Wireguard.PreSharedKey = testCase.preSharedKey
 
 			err := vpnSettings.Validate(filterChoicesGetter, false, testWarner{})
 

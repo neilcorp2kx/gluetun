@@ -61,8 +61,13 @@ var regexpInterfaceName = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 // It should only be ran if the VPN type chosen is Wireguard or AmneziaWg.
 func (w Wireguard) validate(vpnProvider string, ipv6Supported, amneziawg bool) (err error) {
 	dynamicPIAWireguard := vpnProvider == providers.PrivateInternetAccess && !amneziawg
-	if dynamicPIAWireguard && *w.PrivateKey != "" {
-		return errors.New("private key must not be set for Private Internet Access")
+	if dynamicPIAWireguard {
+		switch {
+		case *w.PrivateKey != "":
+			return errors.New("private key must not be set for Private Internet Access")
+		case *w.PreSharedKey != "":
+			return errors.New("pre-shared key must not be set for Private Internet Access")
+		}
 	}
 
 	// Validate PrivateKey

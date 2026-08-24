@@ -46,7 +46,7 @@ func setupWireguard(ctx context.Context, netlinker NetLinker,
 		}
 		connection = wireguardConnection.Connection
 		wireguardSettings = buildRegisteredWireguardSettings(wireguardConnection,
-			settings.Wireguard, ipv6SupportLevel.IsSupported())
+			settings.Wireguard)
 		gateway = wireguardConnection.Gateway
 		clientPrivateKey, err := wgtypes.ParseKey(wireguardSettings.PrivateKey)
 		if err != nil {
@@ -83,7 +83,7 @@ func setupWireguard(ctx context.Context, netlinker NetLinker,
 }
 
 func buildRegisteredWireguardSettings(registration models.WireguardConnection,
-	userSettings settings.Wireguard, ipv6Supported bool,
+	userSettings settings.Wireguard,
 ) wireguard.Settings {
 	privateKey := registration.PrivateKey
 	userSettings.PrivateKey = &privateKey
@@ -92,7 +92,8 @@ func buildRegisteredWireguardSettings(registration models.WireguardConnection,
 		piaPersistentKeepalive := 25 * time.Second
 		userSettings.PersistentKeepaliveInterval = &piaPersistentKeepalive
 	}
-	return buildWireguardSettings(registration.Connection, userSettings, ipv6Supported)
+	const piaIPv6Supported = false
+	return buildWireguardSettings(registration.Connection, userSettings, piaIPv6Supported)
 }
 
 func shortWireguardKey(key string) string {
