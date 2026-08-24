@@ -2,6 +2,7 @@ package iptables
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/netip"
@@ -200,6 +201,30 @@ func acceptOutputMarkedInstruction(protocol, intf string, ip netip.Addr,
 	return fmt.Sprintf("%s OUTPUT -d %s %s -p %s -m %s --dport %d -m mark --mark %d -j ACCEPT",
 		appendOrDelete(remove), ip, interfaceFlag, protocol, protocol, port, mark)
 }
+
+func (c *Config) AcceptOutputFromIPPortToIPPort(ctx context.Context,
+	protocol, intf string, source, destination netip.AddrPort, remove bool,
+) error {
+	if source.Addr().BitLen() != destination.Addr().BitLen() {
+		return errors.New("source and destination address families do not match")
+	}
+
+	interfaceFlag := "-o " + intf
+	if intf == "*" { // all interfaces
+		interfaceFlag = ""
+	}
+
+	instruction := fmt.Sprintf("%s OUTPUT %s -s %s -d %s -p %s -m %s --sport %d --dport %d -j ACCEPT",
+		appendOrDelete(remove), interfaceFlag, source.Addr(), destination.Addr(),
+		protocol, protocol, source.Port(), destination.Port())
+	if destination.Addr().Is4() {
+		return c.runIptablesInstruction(ctx, instruction)
+	} else if c.ip6Tables == "" {
+		return fmt.Errorf("accept output from %s to %s: %s", source, destination, needIP6Tables)
+	}
+	return c.runIP6tablesInstruction(ctx, instruction)
+}
+
 
 // AcceptOutputFromIPToSubnet accepts outgoing traffic from sourceIP to destinationSubnet
 // on the interface intf. If intf is empty, it is set to "*" which means all interfaces.

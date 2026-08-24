@@ -166,6 +166,8 @@ func buildWireguardSettings(connection models.Connection,
 	}
 
 	settings.PersistentKeepaliveInterval = *userSettings.PersistentKeepaliveInterval
+	gso := *userSettings.GSO
+	settings.GSO = &gso
 
 	return settings
 }
