@@ -62,7 +62,7 @@ var regexpInterfaceName = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 func (w Wireguard) validate(vpnProvider string, ipv6Supported, amneziawg bool) (err error) {
 	dynamicPIAWireguard := vpnProvider == providers.PrivateInternetAccess && !amneziawg
 	if dynamicPIAWireguard {
-		if err := w.validatePIAKeys(); err != nil {
+		if err := w.validatePIAStaticSettings(); err != nil {
 			return err
 		}
 	}
@@ -130,12 +130,14 @@ func (w Wireguard) validate(vpnProvider string, ipv6Supported, amneziawg bool) (
 	return nil
 }
 
-func (w Wireguard) validatePIAKeys() error {
+func (w Wireguard) validatePIAStaticSettings() error {
 	switch {
 	case *w.PrivateKey != "":
 		return errors.New("private key must not be set for Private Internet Access")
 	case *w.PreSharedKey != "":
 		return errors.New("pre-shared key must not be set for Private Internet Access")
+	case len(w.Addresses) > 0:
+		return errors.New("interface addresses must not be set for Private Internet Access")
 	default:
 		return nil
 	}
