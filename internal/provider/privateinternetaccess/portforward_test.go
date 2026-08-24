@@ -126,6 +126,51 @@ func Test_KeepPortForward_inputValidation(t *testing.T) {
 	}
 }
 
+func Test_findAPIIP_triesProviderGatewayFirst(t *testing.T) {
+	t.Parallel()
+
+	gateway := netip.MustParseAddr("10.13.161.1")
+	requestedHosts := make([]string, 0, 1)
+	client := &http.Client{
+		Transport: piaRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			requestedHosts = append(requestedHosts, request.URL.Host)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       http.NoBody,
+			}, nil
+		}),
+	}
+
+	apiIP, err := findAPIIP(t.Context(), client, gateway)
+	require.NoError(t, err)
+	assert.Equal(t, gateway, apiIP)
+	assert.Equal(t, []string{"10.13.161.1:19999"}, requestedHosts)
+}
+
+func Test_findAPIIP_fallsBackToLegacyGateway(t *testing.T) {
+	t.Parallel()
+
+	gateway := netip.MustParseAddr("10.13.161.1")
+	requestedHosts := make([]string, 0, 2)
+	client := &http.Client{
+		Transport: piaRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			requestedHosts = append(requestedHosts, request.URL.Host)
+			if request.URL.Host == "10.13.161.1:19999" {
+				return nil, errors.New("direct gateway unavailable")
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       http.NoBody,
+			}, nil
+		}),
+	}
+
+	apiIP, err := findAPIIP(t.Context(), client, gateway)
+	require.NoError(t, err)
+	assert.Equal(t, netip.MustParseAddr("10.13.128.1"), apiIP)
+	assert.Equal(t, []string{"10.13.161.1:19999", "10.13.128.1:19999"}, requestedHosts)
+}
+
 func Test_findAPIIP_rejectsUnsupportedGateway(t *testing.T) {
 	t.Parallel()
 
