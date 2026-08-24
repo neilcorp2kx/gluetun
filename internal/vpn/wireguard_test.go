@@ -37,6 +37,7 @@ func Test_buildRegisteredWireguardSettings(t *testing.T) {
 		PersistentKeepaliveInterval: &zeroKeepalive,
 		Interface:                   "tun0",
 		MTU:                         new(uint32(1320)),
+		GSO:                         new(true),
 	}
 
 	wireguardSettings := buildRegisteredWireguardSettings(registration, userSettings, false)
@@ -47,6 +48,7 @@ func Test_buildRegisteredWireguardSettings(t *testing.T) {
 	assert.Equal(t, registration.Addresses, wireguardSettings.Addresses)
 	assert.Equal(t, []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}, wireguardSettings.AllowedIPs)
 	assert.Equal(t, 25*time.Second, wireguardSettings.PersistentKeepaliveInterval)
+	assert.Equal(t, new(true), wireguardSettings.GSO)
 }
 
 func Test_buildWireguardSettings(t *testing.T) {

@@ -149,7 +149,7 @@ func Test_selectWireguardServer(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, testCase.expectedServer, server.ServerName)
-		}
+		})
 	}
 }
 
