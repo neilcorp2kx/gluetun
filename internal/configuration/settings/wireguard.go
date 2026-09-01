@@ -99,7 +99,7 @@ func (w Wireguard) validate(vpnProvider string, ipv6Supported, amneziawg bool) (
 			hasIPv4 = true
 		}
 	}
-	if !hasIPv4 && !ipv6Supported {
+	if !hasIPv4 && !ipv6Supported && !dynamicPIAWireguard {
 		return fmt.Errorf("no IPv4 interface addresses in %v but IPv6 is not supported",
 			w.Addresses)
 	}
