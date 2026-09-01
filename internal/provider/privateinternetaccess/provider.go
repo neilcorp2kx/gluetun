@@ -1,8 +1,6 @@
 package privateinternetaccess
 
 import (
-	"context"
-	"net"
 	"net/http"
 	"net/netip"
 	"time"
@@ -14,11 +12,9 @@ import (
 )
 
 type Provider struct {
-	storage          common.Storage
-	connPicker       *utils.ConnectionPicker
-	timeNow          func() time.Time
-	newDialingClient func(string, netip.Addr,
-		func(context.Context, string, string) (net.Conn, error)) (*http.Client, error)
+	storage    common.Storage
+	connPicker *utils.ConnectionPicker
+	timeNow    func() time.Time
 	common.Fetcher
 	// Port forwarding
 	portForwardPath string
@@ -31,12 +27,11 @@ func New(storage common.Storage, timeNow func() time.Time,
 	const jsonPortForwardPath = "/gluetun/piaportforward.json"
 	serverUpdater := updater.New(client)
 	return &Provider{
-		storage:          storage,
-		timeNow:          timeNow,
-		connPicker:       utils.NewConnectionPicker(),
-		newDialingClient: newHTTPClientDialing,
-		portForwardPath:  jsonPortForwardPath,
-		Fetcher:          serverUpdater,
+		storage:         storage,
+		timeNow:         timeNow,
+		connPicker:      utils.NewConnectionPicker(),
+		portForwardPath: jsonPortForwardPath,
+		Fetcher:         serverUpdater,
 	}
 }
 

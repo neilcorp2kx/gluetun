@@ -46,6 +46,13 @@ type Wireguard struct {
 	// It defaults to "auto" and cannot be the empty string
 	// in the internal state.
 	Implementation string `json:"implementation"`
+	// GSO enables wireguard-go's GRO/GSO batched TUN I/O by creating
+	// the WireGuard TUN device with IFF_VNET_HDR. It should be disabled
+	// on kernels (e.g. certain NAS devices) that claim IFF_VNET_HDR
+	// support but return EINVAL when wireguard-go writes GRO-coalesced
+	// packets with virtio_net_hdr structs under load.
+	// It defaults to true and cannot be nil in the internal state.
+	GSO *bool `json:"gso"`
 }
 
 var regexpInterfaceName = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
@@ -54,23 +61,13 @@ var regexpInterfaceName = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 // It should only be ran if the VPN type chosen is Wireguard or AmneziaWg.
 func (w Wireguard) validate(vpnProvider string, ipv6Supported, amneziawg bool) (err error) {
 	dynamicPIAWireguard := vpnProvider == providers.PrivateInternetAccess && !amneziawg
-	if dynamicPIAWireguard && *w.PrivateKey != "" {
-		return errors.New("private key must not be set for Private Internet Access")
+	if dynamicPIAWireguard {
+		if err := w.validatePIAStaticSettings(); err != nil {
+			return err
+		}
 	}
 
-	// Validate PrivateKey
-	if *w.PrivateKey == "" && !dynamicPIAWireguard {
-		return errors.New("private key is not set")
-	}
-	if *w.PrivateKey != "" {
-		_, err = wgtypes.ParseKey(*w.PrivateKey)
-	}
-	if err != nil {
-		err = fmt.Errorf("private key is not valid: %w", err)
-		if vpnProvider == providers.Nordvpn &&
-			err.Error() == "wgtypes: incorrect key size: 48" {
-			err = fmt.Errorf("%w - you might be using your access token instead of the Wireguard private key", err)
-		}
+	if err := w.validatePrivateKey(vpnProvider, dynamicPIAWireguard); err != nil {
 		return err
 	}
 
@@ -133,6 +130,39 @@ func (w Wireguard) validate(vpnProvider string, ipv6Supported, amneziawg bool) (
 	return nil
 }
 
+func (w Wireguard) validatePIAStaticSettings() error {
+	switch {
+	case *w.PrivateKey != "":
+		return errors.New("private key must not be set for Private Internet Access")
+	case *w.PreSharedKey != "":
+		return errors.New("pre-shared key must not be set for Private Internet Access")
+	case len(w.Addresses) > 0:
+		return errors.New("interface addresses must not be set for Private Internet Access")
+	default:
+		return nil
+	}
+}
+
+func (w Wireguard) validatePrivateKey(vpnProvider string, optional bool) error {
+	if *w.PrivateKey == "" {
+		if optional {
+			return nil
+		}
+		return errors.New("private key is not set")
+	}
+
+	_, err := wgtypes.ParseKey(*w.PrivateKey)
+	if err == nil {
+		return nil
+	}
+	err = fmt.Errorf("private key is not valid: %w", err)
+	if vpnProvider == providers.Nordvpn &&
+		err.Error() == "wgtypes: incorrect key size: 48" {
+		err = fmt.Errorf("%w - you might be using your access token instead of the Wireguard private key", err)
+	}
+	return err
+}
+
 func (w *Wireguard) copy() (copied Wireguard) {
 	return Wireguard{
 		PrivateKey:                  gosettings.CopyPointer(w.PrivateKey),
@@ -143,6 +173,7 @@ func (w *Wireguard) copy() (copied Wireguard) {
 		Interface:                   w.Interface,
 		MTU:                         w.MTU,
 		Implementation:              w.Implementation,
+		GSO:                         gosettings.CopyPointer(w.GSO),
 	}
 }
 
@@ -156,6 +187,7 @@ func (w *Wireguard) overrideWith(other Wireguard) {
 	w.Interface = gosettings.OverrideWithComparable(w.Interface, other.Interface)
 	w.MTU = gosettings.OverrideWithComparable(w.MTU, other.MTU)
 	w.Implementation = gosettings.OverrideWithComparable(w.Implementation, other.Implementation)
+	w.GSO = gosettings.OverrideWithPointer(w.GSO, other.GSO)
 }
 
 func (w *Wireguard) setDefaults(vpnProvider string) {
@@ -180,6 +212,7 @@ func (w *Wireguard) setDefaults(vpnProvider string) {
 	w.Interface = gosettings.DefaultComparable(w.Interface, "wg0")
 	w.MTU = gosettings.DefaultPointer(w.MTU, 0)
 	w.Implementation = gosettings.DefaultComparable(w.Implementation, "auto")
+	w.GSO = gosettings.DefaultPointer(w.GSO, true)
 }
 
 func (w Wireguard) String() string {
@@ -222,6 +255,10 @@ func (w Wireguard) toLinesNode() (node *gotree.Node) {
 
 	if w.Implementation != "auto" {
 		node.Appendf("Implementation: %s", w.Implementation)
+	}
+
+	if !*w.GSO {
+		node.Append("GSO disabled")
 	}
 
 	return node
@@ -272,5 +309,11 @@ func (w *Wireguard) read(r *reader.Reader, amneziaWG bool) (err error) {
 	if err != nil {
 		return err
 	}
+
+	w.GSO, err = r.BoolPtr("WIREGUARD_GSO")
+	if err != nil {
+		return err
+	}
+
 	return nil
 }

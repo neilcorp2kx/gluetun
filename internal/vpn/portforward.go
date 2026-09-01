@@ -56,7 +56,7 @@ func newNoPortForwarder(providerName string) *noPortForwarder {
 }
 
 func (n *noPortForwarder) Name() string {
-	return n.providerName
+	return n.providerName + " [not supported]"
 }
 
 func (n *noPortForwarder) PortForward(context.Context, pfutils.PortForwardObjects) (

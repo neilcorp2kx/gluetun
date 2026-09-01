@@ -62,7 +62,7 @@ func (v *VPN) Validate(filterChoicesGetter FilterChoicesGetter, ipv6Supported bo
 		if v.Provider.Name == providers.PrivateInternetAccess {
 			err = v.validatePIAWireguard()
 			if err != nil {
-				return fmt.Errorf("Private Internet Access settings: %w", err)
+				return fmt.Errorf("private internet access settings: %w", err)
 			}
 		}
 		const amneziawg = false

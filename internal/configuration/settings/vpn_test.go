@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"net/netip"
 	"testing"
 
 	"github.com/qdm12/gluetun/internal/constants/providers"
@@ -33,6 +34,8 @@ func Test_VPN_validatePIAWireguard(t *testing.T) {
 		regions         []string
 		names           []string
 		wireguardKey    string
+		preSharedKey    string
+		addresses       []netip.Prefix
 		expectedErrPart string
 	}{
 		"valid": {
@@ -72,6 +75,20 @@ func Test_VPN_validatePIAWireguard(t *testing.T) {
 			wireguardKey:    "not-used",
 			expectedErrPart: "private key must not be set",
 		},
+		"static_pre_shared_key_set": {
+			username:        username,
+			password:        password,
+			regions:         []string{region},
+			preSharedKey:    "not-used",
+			expectedErrPart: "pre-shared key must not be set",
+		},
+		"static_interface_address_set": {
+			username:        username,
+			password:        password,
+			regions:         []string{region},
+			addresses:       []netip.Prefix{netip.MustParsePrefix("10.0.0.2/32")},
+			expectedErrPart: "interface addresses must not be set",
+		},
 	}
 
 	filterChoicesGetter := testFilterChoicesGetter{
@@ -95,7 +112,9 @@ func Test_VPN_validatePIAWireguard(t *testing.T) {
 			*vpnSettings.OpenVPN.User = testCase.username
 			*vpnSettings.OpenVPN.Password = testCase.password
 			*vpnSettings.Wireguard.PrivateKey = testCase.wireguardKey
+			*vpnSettings.Wireguard.PreSharedKey = testCase.preSharedKey
 
+			vpnSettings.Wireguard.Addresses = testCase.addresses
 			err := vpnSettings.Validate(filterChoicesGetter, false, testWarner{})
 
 			if testCase.expectedErrPart == "" {

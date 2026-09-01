@@ -47,7 +47,7 @@ func (l *Loop) Run(ctx context.Context, done chan<- struct{}) {
 		case vpn.Wireguard:
 			vpnInterface = settings.Wireguard.Interface
 			vpnRunner, connection, gateway, err = setupWireguard(ctx, l.netLinker, l.fw,
-				providerConf, settings, l.ipv6SupportLevel, subLogger)
+				providerConf, l.restrictedClient, settings, l.ipv6SupportLevel, subLogger)
 		default:
 			panic("vpn type not implemented: " + settings.Type)
 		}
@@ -98,7 +98,7 @@ func (l *Loop) Run(ctx context.Context, done chan<- struct{}) {
 		for stayHere {
 			select {
 			case <-tunnelReady:
-				go l.onTunnelUp(vpnCtx, ctx, tunnelUpData)
+				go l.onTunnelUp(vpnCtx, ctx, tunnelUpData) //nolint:gosec
 			case <-ctx.Done():
 				l.cleanup()
 				vpnCancel()

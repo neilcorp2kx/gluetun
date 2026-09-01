@@ -5,13 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/netip"
-	"time"
 
 	"github.com/qdm12/gluetun/internal/configuration/settings"
 	"github.com/qdm12/gluetun/internal/constants"
 	"github.com/qdm12/gluetun/internal/constants/vpn"
 	"github.com/qdm12/gluetun/internal/models"
+	"github.com/qdm12/gluetun/internal/provider/common"
 	"github.com/qdm12/gluetun/internal/provider/privateinternetaccess/presets"
 	"github.com/qdm12/gluetun/internal/provider/privateinternetaccess/updater"
 	"github.com/qdm12/gluetun/internal/provider/utils"
@@ -20,64 +19,48 @@ import (
 // GetWireguardConnection obtains a live PIA Wireguard registration endpoint.
 // The embedded PIA server list only contains OpenVPN servers.
 func (p *Provider) GetWireguardConnection(ctx context.Context, selection settings.ServerSelection,
-	lookupNetIP func(context.Context, string, string) ([]netip.Addr, error),
-	dialContext func(context.Context, string, string) (net.Conn, error),
-	allowConnection func(context.Context, models.Connection) (func(context.Context) error, error),
-) (
-	connection models.Connection, err error,
-) {
+	restrictedClient common.RestrictedClient,
+) (connection models.Connection, err error) {
+	if restrictedClient == nil {
+		return connection, errors.New("restricted network client is not set")
+	}
+
 	const serverListHostname = "serverlist.piaservers.net"
-	const lookupTimeout = 10 * time.Second
-	lookupCtx, cancel := context.WithTimeout(ctx, lookupTimeout)
-	defer cancel()
-	addresses, err := lookupNetIP(lookupCtx, "ip4", serverListHostname)
+	client, cleanup, err := restrictedClient.OpenHTTPSByHostname(ctx,
+		net.JoinHostPort(serverListHostname, "443"))
 	if err != nil {
-		return connection, fmt.Errorf("resolving PIA server list host: %w", err)
+		return connection, fmt.Errorf("opening PIA server list connection: %w", err)
 	}
-	if len(addresses) == 0 {
-		return connection, errors.New("resolving PIA server list host: no IPv4 address found")
-	}
-
-	const serverListPort uint16 = 443
-	serverListConnection := models.Connection{
-		IP:       addresses[0],
-		Port:     serverListPort,
-		Protocol: constants.TCP,
-	}
-	removeConnection, err := allowConnection(ctx, serverListConnection)
-	if err != nil {
-		return connection, fmt.Errorf("allowing PIA server list connection: %w", err)
-	}
-	defer cleanupTemporaryConnection(ctx, removeConnection, &err)
-
-	client, err := p.newDialingClient(serverListHostname, serverListConnection.IP, dialContext)
-	if err != nil {
-		return connection, fmt.Errorf("creating PIA server list client: %w", err)
-	}
-	defer client.CloseIdleConnections()
+	defer cleanupRestrictedConnection(cleanup, &err)
 
 	liveUpdater := updater.New(client)
-	server, err := liveUpdater.FetchWireguardServer(ctx, selection)
+	servers, err := liveUpdater.FetchWireguardServers(ctx, selection)
 	if err != nil {
-		return connection, fmt.Errorf("fetching Wireguard server: %w", err)
+		return connection, fmt.Errorf("fetching Wireguard servers: %w", err)
 	}
 
-	return models.Connection{
-		Type:        vpn.Wireguard,
-		IP:          server.IPs[0],
-		Port:        wireguardRegistrationPort,
-		Protocol:    constants.UDP,
-		Hostname:    server.Hostname,
-		ServerName:  server.ServerName,
-		PortForward: server.PortForward,
-	}, nil
+	connections := make([]models.Connection, 0, len(servers))
+	for _, server := range servers {
+		for _, ip := range server.IPs {
+			connections = append(connections, models.Connection{
+				Type:        vpn.Wireguard,
+				IP:          ip,
+				Port:        wireguardRegistrationPort,
+				Protocol:    constants.UDP,
+				Hostname:    server.Hostname,
+				ServerName:  server.ServerName,
+				PortForward: server.PortForward,
+			})
+		}
+	}
+	return p.connPicker.PickConnection(connections, selection)
 }
 
-func cleanupTemporaryConnection(ctx context.Context, remove func(context.Context) error, err *error) {
-	removeErr := remove(context.WithoutCancel(ctx))
-	if removeErr != nil {
-		removeErr = fmt.Errorf("removing temporary connection allowance: %w", removeErr)
-		*err = errors.Join(*err, removeErr)
+func cleanupRestrictedConnection(cleanup func() error, err *error) {
+	cleanupErr := cleanup()
+	if cleanupErr != nil {
+		cleanupErr = fmt.Errorf("cleaning up restricted connection: %w", cleanupErr)
+		*err = errors.Join(*err, cleanupErr)
 	}
 }
 

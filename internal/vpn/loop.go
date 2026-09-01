@@ -9,18 +9,20 @@ import (
 	"github.com/qdm12/gluetun/internal/loopstate"
 	"github.com/qdm12/gluetun/internal/models"
 	"github.com/qdm12/gluetun/internal/netlink"
+	"github.com/qdm12/gluetun/internal/provider"
 	"github.com/qdm12/gluetun/internal/vpn/state"
 	"github.com/qdm12/log"
 )
 
 type Loop struct {
-	statusManager  *loopstate.State
-	state          *state.State
-	providers      Providers
-	storage        Storage
-	healthSettings settings.Health
-	healthChecker  HealthChecker
-	healthServer   HealthServer
+	statusManager    *loopstate.State
+	state            *state.State
+	providers        Providers
+	restrictedClient provider.RestrictedClient
+	storage          Storage
+	healthSettings   settings.Health
+	healthChecker    HealthChecker
+	healthServer     HealthServer
 	// Fixed parameters
 	buildInfo        models.BuildInformation
 	versionInfo      bool
@@ -45,6 +47,7 @@ type Loop struct {
 	start       <-chan struct{}
 	running     chan<- models.LoopStatus
 	userTrigger bool
+	healthDone  <-chan struct{}
 	// Internal constant values
 	backoffTime time.Duration
 }
@@ -54,7 +57,7 @@ const (
 )
 
 func NewLoop(vpnSettings settings.VPN, ipv6SupportLevel netlink.IPv6SupportLevel, vpnInputPorts []uint16,
-	providers Providers, storage Storage, boringPoll Service,
+	providers Providers, restrictedClient provider.RestrictedClient, storage Storage, boringPoll Service,
 	healthSettings settings.Health, healthChecker HealthChecker, healthServer HealthServer,
 	openvpnConf OpenVPN, netLinker NetLinker, fw Firewall, routing Routing,
 	portForward PortForward, cmder Cmder,
@@ -70,10 +73,16 @@ func NewLoop(vpnSettings settings.VPN, ipv6SupportLevel netlink.IPv6SupportLevel
 	statusManager := loopstate.New(constants.Stopped, start, running, stop, stopped)
 	state := state.New(statusManager, vpnSettings)
 
+	// Initialize healthDone channel to a closed channel so that the first time
+	// we call <-l.healthDone it does not block
+	healthDone := make(chan struct{})
+	close(healthDone)
+
 	return &Loop{
 		statusManager:    statusManager,
 		state:            state,
 		providers:        providers,
+		restrictedClient: restrictedClient,
 		storage:          storage,
 		healthSettings:   healthSettings,
 		healthChecker:    healthChecker,
@@ -98,6 +107,7 @@ func NewLoop(vpnSettings settings.VPN, ipv6SupportLevel netlink.IPv6SupportLevel
 		stop:             stop,
 		stopped:          stopped,
 		userTrigger:      true,
+		healthDone:       healthDone,
 		backoffTime:      defaultBackoffTime,
 	}
 }

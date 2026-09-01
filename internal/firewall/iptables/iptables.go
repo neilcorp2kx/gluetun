@@ -2,6 +2,7 @@ package iptables
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/netip"
@@ -177,28 +178,27 @@ func (c *Config) AcceptOutput(ctx context.Context,
 	return c.runIP6tablesInstruction(ctx, instruction)
 }
 
-func (c *Config) AcceptOutputMarked(ctx context.Context,
-	protocol, intf string, ip netip.Addr, port uint16, mark uint32, remove bool,
+func (c *Config) AcceptOutputFromIPPortToIPPort(ctx context.Context,
+	protocol, intf string, source, destination netip.AddrPort, remove bool,
 ) error {
-	instruction := acceptOutputMarkedInstruction(protocol, intf, ip, port, mark, remove)
-	if ip.Is4() {
-		return c.runIptablesInstruction(ctx, instruction)
-	} else if c.ip6Tables == "" {
-		return fmt.Errorf("accept marked output to VPN server %s: %s", ip, needIP6Tables)
+	if source.Addr().BitLen() != destination.Addr().BitLen() {
+		return errors.New("source and destination address families do not match")
 	}
-	return c.runIP6tablesInstruction(ctx, instruction)
-}
 
-func acceptOutputMarkedInstruction(protocol, intf string, ip netip.Addr,
-	port uint16, mark uint32, remove bool,
-) string {
 	interfaceFlag := "-o " + intf
 	if intf == "*" { // all interfaces
 		interfaceFlag = ""
 	}
 
-	return fmt.Sprintf("%s OUTPUT -d %s %s -p %s -m %s --dport %d -m mark --mark %d -j ACCEPT",
-		appendOrDelete(remove), ip, interfaceFlag, protocol, protocol, port, mark)
+	instruction := fmt.Sprintf("%s OUTPUT %s -s %s -d %s -p %s -m %s --sport %d --dport %d -j ACCEPT",
+		appendOrDelete(remove), interfaceFlag, source.Addr(), destination.Addr(),
+		protocol, protocol, source.Port(), destination.Port())
+	if destination.Addr().Is4() {
+		return c.runIptablesInstruction(ctx, instruction)
+	} else if c.ip6Tables == "" {
+		return fmt.Errorf("accept output from %s to %s: %s", source, destination, needIP6Tables)
+	}
+	return c.runIP6tablesInstruction(ctx, instruction)
 }
 
 // AcceptOutputFromIPToSubnet accepts outgoing traffic from sourceIP to destinationSubnet

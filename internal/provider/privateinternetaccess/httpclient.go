@@ -1,13 +1,11 @@
 package privateinternetaccess
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
-	"net/netip"
 	"strings"
 	"time"
 
@@ -51,28 +49,14 @@ func newHTTPClient(serverName string) (client *http.Client, err error) {
 	}, nil
 }
 
-func newHTTPClientDialing(serverName string, serverIP netip.Addr,
-	dialContext func(context.Context, string, string) (net.Conn, error),
-) (client *http.Client, err error) {
-	client, err = newHTTPClient(serverName)
+func newPIACertificatePool(serverName string) (*x509.CertPool, error) {
+	client, err := newHTTPClient(serverName)
 	if err != nil {
 		return nil, err
 	}
-
 	transport, ok := client.Transport.(*http.Transport)
-	if !ok {
-		panic("PIA HTTP client transport has an unexpected type")
+	if !ok || transport.TLSClientConfig == nil || transport.TLSClientConfig.RootCAs == nil {
+		return nil, fmt.Errorf("PIA HTTP client TLS configuration has an unexpected type")
 	}
-
-	transport.Proxy = nil
-	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		_, port, err := net.SplitHostPort(address)
-		if err != nil {
-			return nil, fmt.Errorf("splitting dial address: %w", err)
-		}
-		address = net.JoinHostPort(serverIP.String(), port)
-		return dialContext(ctx, network, address)
-	}
-
-	return client, nil
+	return transport.TLSClientConfig.RootCAs, nil
 }

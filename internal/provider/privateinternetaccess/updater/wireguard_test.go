@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func Test_Updater_FetchWireguardServer(t *testing.T) {
+func Test_Updater_FetchWireguardServers(t *testing.T) {
 	t.Parallel()
 
 	client := &http.Client{
@@ -40,9 +40,9 @@ func Test_Updater_FetchWireguardServer(t *testing.T) {
 		Regions: []string{"ca vAnCoUvEr"},
 	}.WithDefaults(providers.PrivateInternetAccess)
 
-	server, err := updater.FetchWireguardServer(context.Background(), selection)
+	servers, err := updater.FetchWireguardServers(context.Background(), selection)
 	require.NoError(t, err)
-	assert.Equal(t, models.Server{
+	assert.Equal(t, []models.Server{{
 		VPN:              vpn.Wireguard,
 		Region:           "CA Vancouver",
 		ServerName:       "vancouver439",
@@ -50,10 +50,10 @@ func Test_Updater_FetchWireguardServer(t *testing.T) {
 		WireguardDynamic: true,
 		PortForward:      true,
 		IPs:              []netip.Addr{netip.MustParseAddr("198.51.100.2")},
-	}, server)
+	}}, servers)
 }
 
-func Test_selectWireguardServer(t *testing.T) {
+func Test_selectWireguardServers(t *testing.T) {
 	t.Parallel()
 
 	vancouverRegion := regionData{
@@ -79,26 +79,26 @@ func Test_selectWireguardServer(t *testing.T) {
 	testCases := map[string]struct {
 		selection       settings.ServerSelection
 		portForwardOnly bool
-		expectedServer  string
+		expectedServers []string
 		errMessage      string
 	}{
 		"region_name_case_insensitive": {
-			selection:      settings.ServerSelection{Regions: []string{"ca vAnCoUvEr"}},
-			expectedServer: "vancouver439",
+			selection:       settings.ServerSelection{Regions: []string{"ca vAnCoUvEr"}},
+			expectedServers: []string{"vancouver439", "vancouver440"},
 		},
 		"region_id": {
-			selection:      settings.ServerSelection{Regions: []string{"CA_VANCOUVER"}},
-			expectedServer: "vancouver439",
+			selection:       settings.ServerSelection{Regions: []string{"CA_VANCOUVER"}},
+			expectedServers: []string{"vancouver439", "vancouver440"},
 		},
 		"server_name": {
-			selection:      settings.ServerSelection{Names: []string{"VANCOUVER440"}},
-			expectedServer: "vancouver440",
+			selection:       settings.ServerSelection{Names: []string{"VANCOUVER440"}},
+			expectedServers: []string{"vancouver440"},
 		},
 		"hostname_only": {
 			selection: settings.ServerSelection{
 				Hostnames: []string{"UK-LONDON.PRIVACY.NETWORK"},
 			},
-			expectedServer: "london401",
+			expectedServers: []string{"london401"},
 		},
 		"combined_region_name_and_hostname": {
 			selection: settings.ServerSelection{
@@ -106,7 +106,7 @@ func Test_selectWireguardServer(t *testing.T) {
 				Names:     []string{"vancouver440"},
 				Hostnames: []string{"ca-vancouver.privacy.network"},
 			},
-			expectedServer: "vancouver440",
+			expectedServers: []string{"vancouver440"},
 		},
 		"hostname_no_match": {
 			selection: settings.ServerSelection{
@@ -122,8 +122,8 @@ func Test_selectWireguardServer(t *testing.T) {
 			errMessage: "no Wireguard server found matching selection",
 		},
 		"region_id_as_server_name": {
-			selection:      settings.ServerSelection{Names: []string{"ca_vancouver"}},
-			expectedServer: "vancouver439",
+			selection:       settings.ServerSelection{Names: []string{"ca_vancouver"}},
+			expectedServers: []string{"vancouver439", "vancouver440"},
 		},
 		"port_forwarding_only": {
 			selection:       settings.ServerSelection{Regions: []string{"UK London"}},
@@ -140,7 +140,7 @@ func Test_selectWireguardServer(t *testing.T) {
 			if testCase.portForwardOnly {
 				*selection.PortForwardOnly = true
 			}
-			server, err := selectWireguardServer(regions, selection)
+			servers, err := selectWireguardServers(regions, selection)
 			if testCase.errMessage != "" {
 				require.Error(t, err)
 				assert.ErrorContains(t, err, testCase.errMessage)
@@ -148,8 +148,12 @@ func Test_selectWireguardServer(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			assert.Equal(t, testCase.expectedServer, server.ServerName)
-		}
+			serverNames := make([]string, len(servers))
+			for i, server := range servers {
+				serverNames[i] = server.ServerName
+			}
+			assert.Equal(t, testCase.expectedServers, serverNames)
+		})
 	}
 }
 

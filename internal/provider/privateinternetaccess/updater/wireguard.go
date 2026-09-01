@@ -12,22 +12,22 @@ import (
 	"github.com/qdm12/gluetun/internal/models"
 )
 
-// FetchWireguardServer obtains a Wireguard server directly from PIA's live
+// FetchWireguardServers obtains Wireguard servers directly from PIA's live
 // server list. PIA Wireguard servers are registered dynamically and are not
 // present in the embedded server list used by the other connection paths.
-func (u *Updater) FetchWireguardServer(ctx context.Context, selection settings.ServerSelection) (
-	server models.Server, err error,
+func (u *Updater) FetchWireguardServers(ctx context.Context, selection settings.ServerSelection) (
+	servers []models.Server, err error,
 ) {
 	data, err := fetchWireguardAPI(ctx, u.client)
 	if err != nil {
-		return server, fmt.Errorf("fetching PIA server list: %w", err)
+		return nil, fmt.Errorf("fetching PIA server list: %w", err)
 	}
 
-	return selectWireguardServer(data.Regions, selection)
+	return selectWireguardServers(data.Regions, selection)
 }
 
-func selectWireguardServer(regions []regionData, selection settings.ServerSelection) (
-	server models.Server, err error,
+func selectWireguardServers(regions []regionData, selection settings.ServerSelection) (
+	servers []models.Server, err error,
 ) {
 	for _, region := range regions {
 		if region.Offline || (*selection.PortForwardOnly && !region.PortForward) ||
@@ -41,7 +41,7 @@ func selectWireguardServer(regions []regionData, selection settings.ServerSelect
 				continue
 			}
 
-			return models.Server{
+			servers = append(servers, models.Server{
 				VPN:              vpn.Wireguard,
 				Region:           region.Name,
 				ServerName:       wireguardServer.CN,
@@ -49,11 +49,14 @@ func selectWireguardServer(regions []regionData, selection settings.ServerSelect
 				WireguardDynamic: true,
 				PortForward:      region.PortForward,
 				IPs:              []netip.Addr{wireguardServer.IP},
-			}, nil
+			})
 		}
 	}
 
-	return server, errors.New("no Wireguard server found matching selection")
+	if len(servers) == 0 {
+		return nil, errors.New("no Wireguard server found matching selection")
+	}
+	return servers, nil
 }
 
 func matchesAnyRegion(region regionData, regions []string) bool {
